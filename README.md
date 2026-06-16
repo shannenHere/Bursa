@@ -24,6 +24,7 @@ A real-time technical analysis and buy signal scanner for Bursa Malaysia (KLSE) 
   - Rich console table (styled, readable)
   - Detailed markdown profiles
   - WhatsApp-friendly summary (line-based, copy-paste friendly)
+  - TradingView recommendation support when available
 
 ## Requirements
 
@@ -34,6 +35,7 @@ A real-time technical analysis and buy signal scanner for Bursa Malaysia (KLSE) 
 - `python-dotenv` - Environment variable management
 - `crewai[google-genai]` - LLM agent framework
 - `rich` - Console table styling
+- `tradingview_ta` - Optional TradingView signal and RSI support
 
 ## Installation
 
@@ -51,7 +53,7 @@ A real-time technical analysis and buy signal scanner for Bursa Malaysia (KLSE) 
 
 3. Install dependencies:
    ```bash
-   pip install yfinance pandas numpy python-dotenv crewai[google-genai] rich
+   pip install yfinance pandas numpy python-dotenv crewai[google-genai] rich tradingview_ta
    ```
 
 4. Create a `.env` file with your Gemini API key:
@@ -69,9 +71,10 @@ python app.py
 The script will:
 1. Scan Bursa Malaysia symbols in liquidity brackets 1000-1150 and 5000-5150
 2. Apply technical filters and scoring
-3. Rank stocks by match score and upside potential
-4. Output:
-   - **Rich Console Table**: Styled summary table in terminal
+3. Attempt TradingView recommendation lookups when available
+4. Rank stocks by match score and upside potential
+5. Output:
+   - **Rich Console Table**: Styled summary table in terminal with TV Rec and TV RSI columns
    - **Detailed Profiles**: Full technical analysis for each stock
    - **WhatsApp Summary**: Line-based format ready for messaging apps
 
@@ -94,7 +97,7 @@ Plain-text format (copy-paste friendly):
 ```
 1) 0123 ABC
    Buy: YES | Sell: MYR 0.30 | Target: MYR 0.40 | Support: MYR 0.22 | SL: MYR 0.20
-   RSI: 31/45/52 | Upside: 22.9% | Timeframe: Daily
+   RSI: 31/45/52 | TV Rec: BUY | TV RSI: 48.5 | Upside: 22.9% | Timeframe: Daily
 ```
 
 ## Buy Signal Logic

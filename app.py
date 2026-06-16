@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import tool
 
+try:
+    from tradingview_ta import TA_Handler, Interval
+    TRADINGVIEW_AVAILABLE = True
+except Exception:
+    TRADINGVIEW_AVAILABLE = False
+
 # ==========================================
 # 1. INITIALIZE CONFIGURATION & ENVIRONMENT
 # ==========================================
@@ -86,6 +92,33 @@ def calculate_technical_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+
+def fetch_yfinance_history(symbol: str, period: str = "3mo", interval: str = "1d") -> pd.DataFrame:
+    ticker_obj = yf.Ticker(symbol)
+    return ticker_obj.history(period=period, interval=interval)
+
+
+def fetch_tradingview_analysis(symbol: str) -> dict | None:
+    if not TRADINGVIEW_AVAILABLE:
+        return None
+
+    clean_symbol = symbol.replace(".KL", "")
+    try:
+        handler = TA_Handler(
+            symbol=clean_symbol,
+            screener="stock",
+            exchange="KLSE",
+            interval=Interval.INTERVAL_1_DAY,
+        )
+        analysis = handler.get_analysis()
+        return {
+            "summary": dict(analysis.summary),
+            "indicators": dict(analysis.indicators),
+        }
+    except Exception:
+        return None
+
+
 # ==========================================
 # 3. LIVE FULL EXCHANGE COMPREHENSIVE SCANNER
 # ==========================================
@@ -112,7 +145,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
         try:
             scanned_count += 1
             ticker_obj = yf.Ticker(symbol)
-            hist = ticker_obj.history(period="3mo")
+            hist = fetch_yfinance_history(symbol, period="3mo", interval="1d")
             
             if hist.empty or len(hist) < 30:
                 skipped_no_data += 1
@@ -166,6 +199,9 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
             except Exception:
                 pass
                 
+            tradingview_recommendation = None
+            tradingview_rsi = None
+
             if not target_price:
                 target_price = current_close * 1.08
 
@@ -190,7 +226,15 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
             match_score = 0
             reasons_failed = []
             insights = []
-            
+            tv_analysis = fetch_tradingview_analysis(symbol)
+            if tv_analysis:
+                tradingview_recommendation = tv_analysis.get("summary", {}).get("RECOMMENDATION")
+                tradingview_rsi = tv_analysis.get("indicators", {}).get("RSI")
+                if tradingview_recommendation == "BUY":
+                    insights.append("TradingView summary also recommends BUY")
+                if isinstance(tradingview_rsi, (int, float)):
+                    insights.append(f"TradingView RSI: {tradingview_rsi:.2f}")
+
             if current_volume >= 200000:
                 match_score += 1
                 insights.append("Strong liquidity")
@@ -333,6 +377,9 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                 "analyst_opinion_count": analyst_opinion_count,
                 "recommendation_key": recommendation_key,
                 "recommendation_mean": round(recommendation_mean, 2) if isinstance(recommendation_mean, (int, float)) else recommendation_mean,
+                "tradingview_recommendation": tradingview_recommendation or "N/A",
+                "tradingview_rsi": round(tradingview_rsi, 2) if isinstance(tradingview_rsi, (int, float)) else None,
+                "data_source": "TradingView+Yahoo" if tv_analysis else "Yahoo",
                 "analyst_recommendation_pass": analyst_recommendation_pass,
                 "missed": ", ".join(reasons_failed) if reasons_failed else "None",
                 "analysis_notes": "; ".join(insights)
@@ -357,7 +404,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
             console = Console()
             table = Table(show_header=True, header_style="bold magenta")
             cols = ["#", "Symbol", "Counter Name", "Rank", "Buy", "Sell Price", "Technical Buy", "Last Price",
-                    "Target Price", "Support", "Stop-Loss", "Timeframe", "Current Price", "3d Low", "Δ vs 3d Low", "Analysts", "Rec", "RSI"]
+                    "Target Price", "Support", "Stop-Loss", "Timeframe", "Current Price", "3d Low", "Δ vs 3d Low", "Analysts", "Rec", "TV Rec", "RSI", "TV RSI"]
             for c in cols:
                 table.add_column(c, overflow="fold")
 
@@ -365,6 +412,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                 recommendation_display = item['recommendation_key'] if item['recommendation_key'] else (
                     str(item['recommendation_mean']) if item['recommendation_mean'] is not None else 'N/A'
                 )
+                tv_rsi_display = f"{item['tradingview_rsi']:.2f}" if item.get('tradingview_rsi') is not None else 'N/A'
                 table.add_row(
                     str(idx),
                     item['symbol'],
@@ -383,7 +431,9 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                     f"{item['price_vs_3d_min_pct']}%",
                     str(item['analyst_opinion_count']),
                     recommendation_display,
-                    f"{item['rsi_1']}/{item['rsi_2']}/{item['rsi_3']}"
+                    item['tradingview_recommendation'],
+                    f"{item['rsi_1']}/{item['rsi_2']}/{item['rsi_3']}",
+                    tv_rsi_display
                 )
 
             console.print("\n[bold underline]Buy Signal Summary Table[/]\n")
@@ -397,7 +447,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                         f"   Buy: {item['buy']} | Sell: {item['sell']} | Target: {item['target']} | Support: {item['support']} | SL: {item['stop_loss']}"
                     )
                     lines.append(
-                        f"   RSI: {item['rsi']} | Upside: {item['upside']} | Timeframe: {item['timeframe']}"
+                        f"   RSI: {item['rsi']} | TV Rec: {item['tv_rec']} | TV RSI: {item['tv_rsi']} | Upside: {item['upside']} | Timeframe: {item['timeframe']}"
                     )
                     lines.append("")
                 lines.append("```")
@@ -415,6 +465,8 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                     'support': f"MYR {item.get('support','N/A')}" if item.get('support') else 'N/A',
                     'stop_loss': f"MYR {item.get('stop_loss','N/A')}" if item.get('stop_loss') else 'N/A',
                     'rsi': f"{item['rsi_1']}/{item['rsi_2']}/{item['rsi_3']}",
+                    'tv_rec': item.get('tradingview_recommendation', 'N/A'),
+                    'tv_rsi': f"{item['tradingview_rsi']:.2f}" if item.get('tradingview_rsi') is not None else 'N/A',
                     'upside': f"{item['target_upside_pct']}%",
                     'timeframe': item.get('timeframe', 'N/A')
                 })
@@ -432,7 +484,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                 "<th>#</th><th>Symbol</th><th>Counter Name</th><th>Rank</th><th>Buy Signal</th><th>Sell Price</th>"
                 "<th>Technical Buy</th><th>Last Price</th><th>Target Price</th><th>Support</th><th>Stop-Loss</th><th>Timeframe</th>"
                 "<th>Current Price</th><th>3d Low Price</th><th>Δ vs 3d Low</th><th>Analyst Opinions</th>"
-                "<th>Recommendation</th><th>RSI 1/2/3</th>"
+                "<th>Recommendation</th><th>TV Rec</th><th>RSI 1/2/3</th><th>TV RSI</th>"
                 "</tr></thead>\n<tbody>\n"
             )
             for idx, item in enumerate(output_pool, 1):
@@ -445,7 +497,7 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                     f"<td>{item.get('technical_buy_note','N/A')}</td><td>MYR {item.get('last_price','N/A')}</td><td>{('MYR ' + str(item['target_price'])) if item.get('target_price') else 'N/A'}</td>"
                     f"<td>{('MYR ' + str(item['support'])) if item.get('support') else 'N/A'}</td><td>{('MYR ' + str(item['stop_loss'])) if item.get('stop_loss') else 'N/A'}</td><td>{item.get('timeframe','N/A')}</td>"
                     f"<td>MYR {item['price']:.2f}</td><td>MYR {item['min_3d_price']:.2f}</td><td>{item['price_vs_3d_min_pct']}%</td>"
-                    f"<td>{item['analyst_opinion_count']}</td><td>{recommendation_display}</td><td>{item['rsi_1']}/{item['rsi_2']}/{item['rsi_3']}</td></tr>\n"
+                    f"<td>{item['analyst_opinion_count']}</td><td>{recommendation_display}</td><td>{item['tradingview_recommendation']}</td><td>{item['rsi_1']}/{item['rsi_2']}/{item['rsi_3']}</td><td>{item['tradingview_rsi'] if item['tradingview_rsi'] is not None else 'N/A'}</td></tr>\n"
                 )
             clean_report += "</tbody></table>\n"
     for idx, item in enumerate(output_pool, 1):
@@ -473,6 +525,8 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
             f"* **Fundamentals:** P/E Ratio: {item['pe']} | Trend Bias: {item['trend_bias']}\n"
             f"* **Moving Averages:** SMA20: {item['sma_20']} | SMA50: {item['sma_50']} | SMA200: {item['sma_200']}\n"
             f"* **Bollinger Bands:** Lower: {item['bb_lower']} | Upper: {item['bb_upper']}\n"
+            f"* **TradingView Recommendation:** {item['tradingview_recommendation']}\n"
+            f"* **TradingView RSI:** {item['tradingview_rsi'] if item['tradingview_rsi'] is not None else 'N/A'}\n"
             f"* **Volatility / Momentum:** ATR: {item['atr']} | Stoch %K: {item['stoch_k']} | %D: {item['stoch_d']}\n"
             f"* **Technical Verification:** Volume: {item['volume']:,} | RSI(med): {item['rsi']} | MACD: {item['macd']} | MACD Hist: {item['macd_hist']} | TD Count: {item['td_count']}\n"
             f"* **Analysis Notes:** {item['analysis_notes']}\n"
