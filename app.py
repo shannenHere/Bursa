@@ -130,8 +130,13 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
     """
     print("🚀 Gathering data vectors from live market catalog stream...")
     
+    # Hardcoded watchlist - always check these stocks
+    watchlist = [1651, 5555, 371]
+    
     # Scanning high liquidity brackets (shorter array to respect free-tier timings)
     prime_ranges = list(range(1000, 1150)) + list(range(5000, 5150))
+    all_symbols = watchlist + prime_ranges
+    
     perfect_matches = []
     near_matches = []
     max_recommendations = 5
@@ -140,8 +145,9 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
     skipped_no_data = 0
     skipped_by_volume = 0
     
-    for current_code in prime_ranges:
+    for current_code in all_symbols:
         symbol = f"{str(current_code).zfill(4)}.KL"
+        is_watchlist_stock = current_code in watchlist
         try:
             scanned_count += 1
             ticker_obj = yf.Ticker(symbol)
@@ -152,7 +158,8 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                 continue
                 
             current_volume = int(hist['Volume'].iloc[-1])
-            if current_volume < 20000:  # Relaxed baseline for data availability (debug)
+            # Skip volume filter for watchlist stocks to ensure they're always checked
+            if current_volume < 20000 and not is_watchlist_stock:
                 skipped_by_volume += 1
                 continue
                 
@@ -393,9 +400,19 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
         except Exception:
             continue
             
-    # Process output list
-    output_pool = perfect_matches + near_matches
-    output_pool = sorted(output_pool, key=lambda x: (x['score'], x['target_upside_pct']), reverse=True)[:max_recommendations]
+    # Process output list - separate watchlist from others
+    all_matches = perfect_matches + near_matches
+    
+    # Separate watchlist stocks from others
+    watchlist_results = [item for item in all_matches if int(item['symbol']) in watchlist]
+    other_results = [item for item in all_matches if int(item['symbol']) not in watchlist]
+    
+    # Sort: watchlist stocks by symbol (to maintain order), others by score and upside
+    watchlist_results = sorted(watchlist_results, key=lambda x: x['symbol'])
+    other_results = sorted(other_results, key=lambda x: (x['score'], x['target_upside_pct']), reverse=True)
+    
+    # Combine: watchlist first, then others
+    output_pool = (watchlist_results + other_results)[:max_recommendations]
     
     # Formulate output text profile; print a Rich table to console for readability
     clean_report = "\n"
@@ -413,9 +430,10 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
                     str(item['recommendation_mean']) if item['recommendation_mean'] is not None else 'N/A'
                 )
                 tv_rsi_display = f"{item['tradingview_rsi']:.2f}" if item.get('tradingview_rsi') is not None else 'N/A'
+                symbol_display = f"📌 {item['symbol']}" if int(item['symbol']) in watchlist else item['symbol']
                 table.add_row(
                     str(idx),
-                    item['symbol'],
+                    symbol_display,
                     item['company_name'],
                     item['buy_signal_rank'],
                     'YES' if item['buy_signal'] else 'No',
@@ -505,8 +523,9 @@ def bursa_full_exchange_scanner(target_sector_flag: str) -> str:
         recommendation_details = item['recommendation_key'] if item['recommendation_key'] else (
             str(item['recommendation_mean']) if item['recommendation_mean'] is not None else 'N/A'
         )
+        source_note = "[📌 WATCHLIST]" if int(item['symbol']) in watchlist else "[📊 SCANNER]"
         clean_report += (
-            f"### {idx}. {item['company_name']} ({item['symbol']}) — Match Score: {item['score']}/5\n"
+            f"### {idx}. {source_note} {item['company_name']} ({item['symbol']}) — Match Score: {item['score']}/5\n"
             f"* **Match Category:** {item['category']}\n"
             f"* **Price:** MYR {item['price']:.2f} ({item['price_change_pct']}% vs prior close)\n"
             f"* **3-Day Low Comparison:** MYR {item['min_3d_price']:.2f} | +{item['price_vs_3d_min_pct']}%\n"
@@ -581,11 +600,79 @@ trading_desk_crew = Crew(
     process=Process.sequential
 )
 
-if __name__ == "__main__":
-    print("🔄 Initializing intelligent scanning system pipeline...")
+# ==========================================
+# 6. QUICK STOCK LOOKUP (SINGLE STOCK ANALYZER)
+# ==========================================
+def quick_stock_lookup(symbol_code: str) -> str:
+    """
+    Quick lookup for a specific stock by its Bursa Malaysia code (e.g., '0325').
+    Returns formatted analysis without running the full crew workflow.
+    """
+    symbol = f"{str(symbol_code).zfill(4)}.KL"
+    print(f"🔍 Fetching data for {symbol}...")
+    
     try:
-        final_output = trading_desk_crew.kickoff(inputs={'target_sector_flag': 'ALL'})
-        print("\n=================== FINAL PORTFOLIO LEDGER REPORT ===================\n")
-        print(final_output)
+        hist = fetch_yfinance_history(symbol, period="3mo", interval="1d")
+        if hist.empty or len(hist) < 30:
+            return f"❌ No sufficient data for {symbol}"
+        
+        df = calculate_technical_metrics(hist)
+        current_close = float(df['Close'].iloc[-1])
+        current_rsi1 = float(df['RSI_1'].iloc[-1])
+        current_rsi2 = float(df['RSI_2'].iloc[-1])
+        current_rsi3 = float(df['RSI_3'].iloc[-1])
+        current_volume = int(hist['Volume'].iloc[-1])
+        
+        ticker_obj = yf.Ticker(symbol)
+        company_name = "N/A"
+        try:
+            info = ticker_obj.info
+            if info:
+                company_name = info.get('longName', info.get('shortName', 'N/A'))
+        except:
+            pass
+        
+        tv_analysis = fetch_tradingview_analysis(symbol)
+        tv_rec = tv_analysis.get("summary", {}).get("RECOMMENDATION") if tv_analysis else "N/A"
+        tv_rsi = tv_analysis.get("indicators", {}).get("RSI") if tv_analysis else None
+        
+        report = (
+            f"\n✅ Stock Lookup: {company_name} ({symbol_code})\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 **Price Data:**\n"
+            f"   Current Price: RM {current_close:.4f}\n"
+            f"   Volume: {current_volume:,}\n"
+            f"\n📈 **Technical Indicators:**\n"
+            f"   RSI (7/14/28): {current_rsi1:.2f} / {current_rsi2:.2f} / {current_rsi3:.2f}\n"
+            f"   Buy Signal (RSI3 > RSI1): {'✓ YES' if current_rsi3 > current_rsi1 else '✗ NO'}\n"
+            f"   RSI Range Check (30-55): {'✓ PASS' if 30 <= current_rsi1 <= 55 and 30 <= current_rsi2 <= 55 and 30 <= current_rsi3 <= 55 else '✗ FAIL'}\n"
+            f"\n🎯 **TradingView Analysis:**\n"
+            f"   Recommendation: {tv_rec}\n"
+            f"   RSI: {tv_rsi if tv_rsi else 'N/A'}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        return report
     except Exception as e:
-        print("\n⚠️ Framework Rate-Limit Hit. Please review the live intercepted stream generated above.")
+        return f"❌ Error fetching {symbol}: {e}"
+
+
+if __name__ == "__main__":
+    import sys
+    
+    # Check if a specific stock code is provided as argument
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ['lookup', 'check', 'price']:
+        if len(sys.argv) > 2:
+            stock_code = sys.argv[2]
+            result = quick_stock_lookup(stock_code)
+            print(result)
+        else:
+            print("Usage: python app.py lookup <stock_code>")
+            print("Example: python app.py lookup 0325  # Check MRCB")
+    else:
+        print("🔄 Initializing intelligent scanning system pipeline...")
+        try:
+            final_output = trading_desk_crew.kickoff(inputs={'target_sector_flag': 'ALL'})
+            print("\n=================== FINAL PORTFOLIO LEDGER REPORT ===================\n")
+            print(final_output)
+        except Exception as e:
+            print("\n⚠️ Framework Rate-Limit Hit. Please review the live intercepted stream generated above.")

@@ -68,15 +68,78 @@ Run the scanner:
 python app.py
 ```
 
+Or check a specific stock instantly:
+```bash
+python app.py lookup 0371    # Quick lookup for Camaroe Berhad
+python app.py lookup 1651    # Quick lookup for Malaysian Resources Corporation Berhad
+python app.py lookup 5555    # Quick lookup for Sunway Healthcare Holdings Berhad
+```
+
+## Quick Lookup Output
+
+Quick lookup displays:
+- Stock name and Bursa Malaysia code
+- Current price
+- Trading volume
+- RSI levels (7/14/28 periods)
+- Buy signal status
+- TradingView recommendation (if available)
+
+Example:
+```
+[Fetching data for 0325.KL...]
+
+Stock Lookup: Northeast Group Berhad (0325)
+=====================================
+Price Data:
+   Current Price: RM 1.0200
+   Volume: 1,010,700
+
+Technical Indicators:
+   RSI (7/14/28): 42.86 / 56.04 / 58.06
+   Buy Signal (RSI3 > RSI1): YES
+   RSI Range Check (30-55): FAIL
+
+TradingView Analysis:
+   Recommendation: N/A
+   RSI: N/A
+=====================================
+```
+
+## Full Scanner Output
+
+Run the full exchange scanner:
+```bash
+python app.py
+```
+
 The script will:
-1. Scan Bursa Malaysia symbols in liquidity brackets 1000-1150 and 5000-5150
-2. Apply technical filters and scoring
-3. Attempt TradingView recommendation lookups when available
-4. Rank stocks by match score and upside potential
-5. Output:
-   - **Rich Console Table**: Styled summary table in terminal with TV Rec and TV RSI columns
-   - **Detailed Profiles**: Full technical analysis for each stock
+1. **Always check hardcoded watchlist**: CAMAROE (0371), MRCB (1651), SUNMED (5555) 
+2. Scan Bursa Malaysia symbols in liquidity brackets 1000-1150 and 5000-5150
+3. Apply technical filters and scoring
+4. Attempt TradingView recommendation lookups when available
+5. **Display results in priority order**:
+   - **Watchlist stocks first** (marked with 📌): 0371, 1651, 5555
+   - **Scanner results after** (sorted by score and upside potential)
+6. Output:
+   - **Rich Console Table**: Styled summary table with 📌 badge on watchlist stocks
+   - **Detailed Profiles**: Full technical analysis for each stock (marked [📌 WATCHLIST] or [📊 SCANNER])
    - **WhatsApp Summary**: Line-based format ready for messaging apps
+
+## Output Indicators
+
+In all output formats:
+- **📌 Badge** or **[📌 WATCHLIST]**: Stock from the hardcoded watchlist (always checked)
+- **[📊 SCANNER]**: Stock discovered through exchange scanning
+
+## Watchlist Configuration
+
+Edit the hardcoded watchlist in `app.py` (around line 134):
+```python
+watchlist = [1651, 5555, 371] # CAMAROE, MRCB, SUNMED 
+```
+
+Replace with your preferred stock codes to always monitor specific stocks.
 
 ## Output Formats
 
